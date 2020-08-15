@@ -2,7 +2,7 @@ package eu.kanade.tachiyomi.ui.base.controller
 
 import android.content.pm.PackageManager.PERMISSION_GRANTED
 import android.os.Build
-import android.support.v4.content.ContextCompat
+import androidx.core.content.ContextCompat
 import com.bluelinelabs.conductor.Controller
 import com.bluelinelabs.conductor.Router
 import com.bluelinelabs.conductor.RouterTransaction
@@ -28,8 +28,8 @@ fun Controller.requestPermissionsSafe(permissions: Array<String>, requestCode: I
     }
 }
 
-fun Controller.withFadeTransaction(): RouterTransaction {
+fun Controller.withFadeTransaction(duration: Long = 150L): RouterTransaction {
     return RouterTransaction.with(this)
-            .pushChangeHandler(FadeChangeHandler())
-            .popChangeHandler(FadeChangeHandler())
+        .pushChangeHandler(FadeChangeHandler(duration))
+        .popChangeHandler(FadeChangeHandler(duration))
 }

@@ -1,227 +1,253 @@
 package eu.kanade.tachiyomi.ui.setting
 
-import android.app.Dialog
-import android.os.Bundle
-import android.os.Handler
-import android.support.v7.preference.PreferenceScreen
-import android.view.View
-import com.afollestad.materialdialogs.MaterialDialog
+import android.content.Intent
+import android.os.Build
+import android.provider.Settings
+import androidx.preference.PreferenceScreen
 import eu.kanade.tachiyomi.R
-import eu.kanade.tachiyomi.data.database.DatabaseHelper
-import eu.kanade.tachiyomi.data.library.LibraryUpdateJob
-import eu.kanade.tachiyomi.data.preference.PreferencesHelper
-import eu.kanade.tachiyomi.data.preference.getOrDefault
-import eu.kanade.tachiyomi.ui.base.controller.DialogController
-import eu.kanade.tachiyomi.util.LocaleHelper
-import kotlinx.android.synthetic.main.pref_library_columns.view.*
-import rx.Observable
-import uy.kohesive.injekt.Injekt
-import uy.kohesive.injekt.api.get
 import eu.kanade.tachiyomi.data.preference.PreferenceKeys as Keys
+import eu.kanade.tachiyomi.data.preference.PreferenceValues as Values
+import eu.kanade.tachiyomi.data.preference.asImmediateFlow
+import eu.kanade.tachiyomi.util.preference.defaultValue
+import eu.kanade.tachiyomi.util.preference.entriesRes
+import eu.kanade.tachiyomi.util.preference.intListPreference
+import eu.kanade.tachiyomi.util.preference.listPreference
+import eu.kanade.tachiyomi.util.preference.onChange
+import eu.kanade.tachiyomi.util.preference.onClick
+import eu.kanade.tachiyomi.util.preference.preference
+import eu.kanade.tachiyomi.util.preference.preferenceCategory
+import eu.kanade.tachiyomi.util.preference.switchPreference
+import eu.kanade.tachiyomi.util.preference.titleRes
+import eu.kanade.tachiyomi.util.system.LocaleHelper
+import java.util.Date
+import kotlinx.coroutines.flow.launchIn
 
 class SettingsGeneralController : SettingsController() {
-
-    private val db: DatabaseHelper = Injekt.get()
 
     override fun setupPreferenceScreen(screen: PreferenceScreen) = with(screen) {
         titleRes = R.string.pref_category_general
 
-        listPreference {
-            key = Keys.lang
-            titleRes = R.string.pref_language
-            entryValues = arrayOf("", "ar", "bg", "bn", "de", "en-US", "en-GB", "es", "fr", "hi",
-                    "hu", "in", "it", "ja", "ko", "lv", "ms", "nl", "pl", "pt", "pt-BR", "ro",
-                    "ru", "vi")
-            entries = entryValues.map { value ->
-                val locale = LocaleHelper.getLocaleFromString(value.toString())
-                locale?.getDisplayName(locale)?.capitalize() ?:
-                        context.getString(R.string.system_default)
-            }.toTypedArray()
-            defaultValue = ""
-            summary = "%s"
-
-            onChange { newValue ->
-                val activity = activity ?: return@onChange false
-                val app = activity.application
-                LocaleHelper.changeLocale(newValue.toString())
-                LocaleHelper.updateConfiguration(app, app.resources.configuration)
-                activity.recreate()
-                true
-            }
-        }
-        intListPreference {
-            key = Keys.theme
-            titleRes = R.string.pref_theme
-            entriesRes = arrayOf(R.string.light_theme, R.string.dark_theme, R.string.amoled_theme)
-            entryValues = arrayOf("1", "2", "3")
-            defaultValue = "1"
-            summary = "%s"
-
-            onChange {
-                activity?.recreate()
-                true
-            }
-        }
-        preference {
-            titleRes = R.string.pref_library_columns
-            onClick {
-                LibraryColumnsDialog().showDialog(router)
-            }
-
-            fun getColumnValue(value: Int): String {
-                return if (value == 0)
-                    context.getString(R.string.default_columns)
-                else
-                    value.toString()
-            }
-
-            Observable.combineLatest(
-                    preferences.portraitColumns().asObservable(),
-                    preferences.landscapeColumns().asObservable(),
-                    { portraitCols, landscapeCols -> Pair(portraitCols, landscapeCols) })
-                    .subscribeUntilDestroy { (portraitCols, landscapeCols) ->
-                        val portrait = getColumnValue(portraitCols)
-                        val landscape = getColumnValue(landscapeCols)
-                        summary = "${context.getString(R.string.portrait)}: $portrait, " +
-                                "${context.getString(R.string.landscape)}: $landscape"
-                    }
-        }
         intListPreference {
             key = Keys.startScreen
             titleRes = R.string.pref_start_screen
-            entriesRes = arrayOf(R.string.label_library, R.string.label_recent_manga,
-                    R.string.label_recent_updates)
-            entryValues = arrayOf("1", "2", "3")
+            entriesRes = arrayOf(
+                R.string.label_library,
+                R.string.label_recent_updates,
+                R.string.label_recent_manga,
+                R.string.browse
+            )
+            entryValues = arrayOf("1", "3", "2", "4")
             defaultValue = "1"
             summary = "%s"
         }
-        intListPreference {
-            key = Keys.libraryUpdateInterval
-            titleRes = R.string.pref_library_update_interval
-            entriesRes = arrayOf(R.string.update_never, R.string.update_1hour,
-                    R.string.update_2hour, R.string.update_3hour, R.string.update_6hour,
-                    R.string.update_12hour, R.string.update_24hour, R.string.update_48hour)
-            entryValues = arrayOf("0", "1", "2", "3", "6", "12", "24", "48")
-            defaultValue = "0"
-            summary = "%s"
-
-            onChange { newValue ->
-                // Always cancel the previous task, it seems that sometimes they are not updated.
-                LibraryUpdateJob.cancelTask()
-
-                val interval = (newValue as String).toInt()
-                if (interval > 0) {
-                    LibraryUpdateJob.setupTask(interval)
-                }
-                true
-            }
-        }
-        multiSelectListPreference {
-            key = Keys.libraryUpdateRestriction
-            titleRes = R.string.pref_library_update_restriction
-            entriesRes = arrayOf(R.string.wifi, R.string.charging)
-            entryValues = arrayOf("wifi", "ac")
-            summaryRes = R.string.pref_library_update_restriction_summary
-
-            preferences.libraryUpdateInterval().asObservable()
-                    .subscribeUntilDestroy { isVisible = it > 0 }
-
-            onChange {
-                // Post to event looper to allow the preference to be updated.
-                Handler().post { LibraryUpdateJob.setupTask() }
-                true
-            }
-        }
         switchPreference {
-            key = Keys.updateOnlyNonCompleted
-            titleRes = R.string.pref_update_only_non_completed
+            key = Keys.confirmExit
+            titleRes = R.string.pref_confirm_exit
             defaultValue = false
         }
-
-        val dbCategories = db.getCategories().executeAsBlocking()
-
-        multiSelectListPreference {
-            key = Keys.libraryUpdateCategories
-            titleRes = R.string.pref_library_update_categories
-            entries = dbCategories.map { it.name }.toTypedArray()
-            entryValues = dbCategories.map { it.id.toString() }.toTypedArray()
-
-            preferences.libraryUpdateCategories().asObservable()
-                    .subscribeUntilDestroy {
-                        val selectedCategories = it
-                                .mapNotNull { id -> dbCategories.find { it.id == id.toInt() } }
-                                .sortedBy { it.order }
-
-                        summary = if (selectedCategories.isEmpty())
-                            context.getString(R.string.all)
-                        else
-                            selectedCategories.joinToString { it.name }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            preference {
+                titleRes = R.string.pref_manage_notifications
+                onClick {
+                    val intent = Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).apply {
+                        putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)
                     }
-        }
-        intListPreference {
-            key = Keys.defaultCategory
-            titleRes = R.string.default_category
-
-            val selectedCategory = dbCategories.find { it.id == preferences.defaultCategory() }
-            entries = arrayOf(context.getString(R.string.default_category_summary)) +
-                    dbCategories.map { it.name }.toTypedArray()
-            entryValues = arrayOf("-1") + dbCategories.map { it.id.toString() }.toTypedArray()
-            defaultValue = "-1"
-            summary = selectedCategory?.name ?: context.getString(R.string.default_category_summary)
-
-            onChange { newValue ->
-                summary = dbCategories.find {
-                    it.id == (newValue as String).toInt()
-                }?.name ?: context.getString(R.string.default_category_summary)
-                true
-            }
-        }
-    }
-
-    class LibraryColumnsDialog : DialogController() {
-
-        private val preferences: PreferencesHelper = Injekt.get()
-
-        private var portrait = preferences.portraitColumns().getOrDefault()
-        private var landscape = preferences.landscapeColumns().getOrDefault()
-
-        override fun onCreateDialog(savedViewState: Bundle?): Dialog {
-            val dialog = MaterialDialog.Builder(activity!!)
-                    .title(R.string.pref_library_columns)
-                    .customView(R.layout.pref_library_columns, false)
-                    .positiveText(android.R.string.ok)
-                    .negativeText(android.R.string.cancel)
-                    .onPositive { _, _ ->
-                        preferences.portraitColumns().set(portrait)
-                        preferences.landscapeColumns().set(landscape)
-                    }
-                    .build()
-
-            onViewCreated(dialog.view)
-            return dialog
-        }
-
-        fun onViewCreated(view: View) {
-            with(view.portrait_columns) {
-                displayedValues = arrayOf(context.getString(R.string.default_columns)) +
-                        IntRange(1, 10).map(Int::toString)
-                value = portrait
-
-                setOnValueChangedListener { _, _, newValue ->
-                    portrait = newValue
-                }
-            }
-            with(view.landscape_columns) {
-                displayedValues = arrayOf(context.getString(R.string.default_columns)) +
-                        IntRange(1, 10).map(Int::toString)
-                value = landscape
-
-                setOnValueChangedListener { _, _, newValue ->
-                    landscape = newValue
+                    startActivity(intent)
                 }
             }
         }
 
-    }
+        preferenceCategory {
+            titleRes = R.string.pref_category_theme
 
+            listPreference {
+                key = Keys.themeMode
+                titleRes = R.string.pref_theme_mode
+
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    entriesRes = arrayOf(
+                        R.string.theme_system,
+                        R.string.theme_light,
+                        R.string.theme_dark
+                    )
+                    entryValues = arrayOf(
+                        Values.ThemeMode.system.name,
+                        Values.ThemeMode.light.name,
+                        Values.ThemeMode.dark.name
+                    )
+                    defaultValue = Values.ThemeMode.system.name
+                } else {
+                    entriesRes = arrayOf(
+                        R.string.theme_light,
+                        R.string.theme_dark
+                    )
+                    entryValues = arrayOf(
+                        Values.ThemeMode.light.name,
+                        Values.ThemeMode.dark.name
+                    )
+                    defaultValue = Values.ThemeMode.light.name
+                }
+
+                summary = "%s"
+
+                onChange {
+                    activity?.recreate()
+                    true
+                }
+            }
+            listPreference {
+                key = Keys.themeLight
+                titleRes = R.string.pref_theme_light
+                entriesRes = arrayOf(
+                    R.string.theme_light_default,
+                    R.string.theme_light_blue
+                )
+                entryValues = arrayOf(
+                    Values.LightThemeVariant.default.name,
+                    Values.LightThemeVariant.blue.name
+                )
+                defaultValue = Values.LightThemeVariant.default.name
+                summary = "%s"
+
+                preferences.themeMode().asImmediateFlow { isVisible = it != Values.ThemeMode.dark }
+                    .launchIn(scope)
+
+                onChange {
+                    if (preferences.themeMode().get() != Values.ThemeMode.dark) {
+                        activity?.recreate()
+                    }
+                    true
+                }
+            }
+            listPreference {
+                key = Keys.themeDark
+                titleRes = R.string.pref_theme_dark
+                entriesRes = arrayOf(
+                    R.string.theme_dark_default,
+                    R.string.theme_dark_blue,
+                    R.string.theme_dark_amoled
+                )
+                entryValues = arrayOf(
+                    Values.DarkThemeVariant.default.name,
+                    Values.DarkThemeVariant.blue.name,
+                    Values.DarkThemeVariant.amoled.name
+                )
+                defaultValue = Values.DarkThemeVariant.default.name
+                summary = "%s"
+
+                preferences.themeMode().asImmediateFlow { isVisible = it != Values.ThemeMode.light }
+                    .launchIn(scope)
+
+                onChange {
+                    if (preferences.themeMode().get() != Values.ThemeMode.light) {
+                        activity?.recreate()
+                    }
+                    true
+                }
+            }
+        }
+
+        preferenceCategory {
+            titleRes = R.string.pref_category_locale
+
+            listPreference {
+                key = Keys.lang
+                titleRes = R.string.pref_language
+
+                val langs = mutableListOf<Pair<String, String>>()
+                langs += Pair(
+                    "",
+                    "${context.getString(R.string.system_default)} (${LocaleHelper.getDisplayName("")})"
+                )
+                // Due to compatibility issues:
+                // - Hebrew: `he` is copied into `iw` at build time
+                langs += arrayOf(
+                    "ar",
+                    "be",
+                    "bg",
+                    "bn",
+                    "ca",
+                    "cs",
+                    "cv",
+                    "de",
+                    "el",
+                    "es",
+                    "es-419",
+                    "en-US",
+                    "en-GB",
+                    "fa",
+                    "fi",
+                    "fil",
+                    "fr",
+                    "he",
+                    "hi",
+                    "hr",
+                    "hu",
+                    "in",
+                    "it",
+                    "ja",
+                    "ka-rGE",
+                    "kn",
+                    "ko",
+                    "lv",
+                    "mr",
+                    "ms",
+                    "nb-rNO",
+                    "nl",
+                    "pl",
+                    "pt",
+                    "pt-BR",
+                    "ro",
+                    "ru",
+                    "sc",
+                    "sk",
+                    "sr",
+                    "sv",
+                    "th",
+                    "tr",
+                    "uk",
+                    "ur-rPK",
+                    "vi",
+                    "zh-rCN",
+                    "zh-rTW"
+                )
+                    .map {
+                        Pair(it, LocaleHelper.getDisplayName(it))
+                    }
+                    .sortedBy { it.second }
+
+                entryValues = langs.map { it.first }.toTypedArray()
+                entries = langs.map { it.second }.toTypedArray()
+                defaultValue = ""
+                summary = "%s"
+
+                onChange { newValue ->
+                    val activity = activity ?: return@onChange false
+                    val app = activity.application
+                    LocaleHelper.changeLocale(newValue.toString())
+                    LocaleHelper.updateConfiguration(app, app.resources.configuration)
+                    activity.recreate()
+                    true
+                }
+            }
+            listPreference {
+                key = Keys.dateFormat
+                titleRes = R.string.pref_date_format
+                entryValues = arrayOf("", "MM/dd/yy", "dd/MM/yy", "yyyy-MM-dd")
+
+                val now = Date().time
+                entries = entryValues.map { value ->
+                    val formattedDate = preferences.dateFormat(value.toString()).format(now)
+                    if (value == "") {
+                        "${context.getString(R.string.system_default)} ($formattedDate)"
+                    } else {
+                        "$value ($formattedDate)"
+                    }
+                }.toTypedArray()
+
+                defaultValue = ""
+                summary = "%s"
+            }
+        }
+    }
 }

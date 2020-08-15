@@ -1,44 +1,74 @@
 package eu.kanade.tachiyomi.data.track.kitsu
 
-import android.support.annotation.CallSuper
-import com.github.salomonbrys.kotson.*
+import androidx.annotation.CallSuper
+import com.github.salomonbrys.kotson.byInt
+import com.github.salomonbrys.kotson.byString
+import com.github.salomonbrys.kotson.nullInt
+import com.github.salomonbrys.kotson.nullObj
+import com.github.salomonbrys.kotson.nullString
+import com.github.salomonbrys.kotson.obj
 import com.google.gson.JsonObject
 import eu.kanade.tachiyomi.data.database.models.Track
 import eu.kanade.tachiyomi.data.track.TrackManager
 import eu.kanade.tachiyomi.data.track.model.TrackSearch
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
-open class KitsuManga(obj: JsonObject) {
+class KitsuSearchManga(obj: JsonObject) {
     val id by obj.byInt
-    val canonicalTitle by obj["attributes"].byString
-    val chapterCount = obj["attributes"].obj.get("chapterCount").nullInt
-    val type = obj["attributes"].obj.get("mangaType").nullString.orEmpty()
-    val original by obj["attributes"].obj["posterImage"].byString
-    val synopsis by obj["attributes"].byString
-    val startDate = obj["attributes"].obj.get("startDate").nullString.orEmpty()
-    open val status = obj["attributes"].obj.get("status").nullString.orEmpty()
+    private val canonicalTitle by obj.byString
+    private val chapterCount = obj.get("chapterCount").nullInt
+    val subType = obj.get("subtype").nullString
+    val original = obj.get("posterImage").nullObj?.get("original")?.asString
+    private val synopsis by obj.byString
+    private var startDate = obj.get("startDate").nullString?.let {
+        val outputDf = SimpleDateFormat("yyyy-MM-dd", Locale.US)
+        outputDf.format(Date(it.toLong() * 1000))
+    }
+    private val endDate = obj.get("endDate").nullString
 
     @CallSuper
-    open fun toTrack() = TrackSearch.create(TrackManager.KITSU).apply {
-        media_id = this@KitsuManga.id
+    fun toTrack() = TrackSearch.create(TrackManager.KITSU).apply {
+        media_id = this@KitsuSearchManga.id
+        title = canonicalTitle
+        total_chapters = chapterCount ?: 0
+        cover_url = original ?: ""
+        summary = synopsis
+        tracking_url = KitsuApi.mangaUrl(media_id)
+        publishing_status = if (endDate == null) {
+            "Publishing"
+        } else {
+            "Finished"
+        }
+        publishing_type = subType ?: ""
+        start_date = startDate ?: ""
+    }
+}
+
+class KitsuLibManga(obj: JsonObject, manga: JsonObject) {
+    val id by manga.byInt
+    private val canonicalTitle by manga["attributes"].byString
+    private val chapterCount = manga["attributes"].obj.get("chapterCount").nullInt
+    val type = manga["attributes"].obj.get("mangaType").nullString.orEmpty()
+    val original by manga["attributes"].obj["posterImage"].byString
+    private val synopsis by manga["attributes"].byString
+    private val startDate = manga["attributes"].obj.get("startDate").nullString.orEmpty()
+    private val libraryId by obj.byInt("id")
+    val status by obj["attributes"].byString
+    private val ratingTwenty = obj["attributes"].obj.get("ratingTwenty").nullString
+    val progress by obj["attributes"].byInt
+
+    fun toTrack() = TrackSearch.create(TrackManager.KITSU).apply {
+        media_id = libraryId
         title = canonicalTitle
         total_chapters = chapterCount ?: 0
         cover_url = original
         summary = synopsis
         tracking_url = KitsuApi.mangaUrl(media_id)
-        publishing_status = this@KitsuManga.status
+        publishing_status = this@KitsuLibManga.status
         publishing_type = type
-        start_date = startDate.orEmpty()
-    }
-}
-
-class KitsuLibManga(obj: JsonObject, manga: JsonObject) : KitsuManga(manga) {
-    val libraryId by obj.byInt("id")
-    override val status by obj["attributes"].byString
-    val ratingTwenty = obj["attributes"].obj.get("ratingTwenty").nullString
-    val progress by obj["attributes"].byInt
-
-    override fun toTrack() = super.toTrack().apply {
-        media_id = libraryId // TODO migrate media ids to library ids
+        start_date = startDate
         status = toTrackStatus()
         score = ratingTwenty?.let { it.toInt() / 2f } ?: 0f
         last_chapter_read = progress
@@ -52,7 +82,6 @@ class KitsuLibManga(obj: JsonObject, manga: JsonObject) : KitsuManga(manga) {
         "planned" -> Kitsu.PLAN_TO_READ
         else -> throw Exception("Unknown status")
     }
-
 }
 
 fun Track.toKitsuStatus() = when (status) {

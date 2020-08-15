@@ -9,7 +9,8 @@ import eu.kanade.tachiyomi.data.database.tables.MangaTable as Manga
 /**
  * Query to get the manga from the library, with their categories and unread count.
  */
-val libraryQuery = """
+val libraryQuery =
+    """
     SELECT M.*, COALESCE(MC.${MangaCategory.COL_CATEGORY_ID}, 0) AS ${Manga.COL_CATEGORY}
     FROM (
         SELECT ${Manga.TABLE}.*, COALESCE(C.unread, 0) AS ${Manga.COL_UNREAD}
@@ -33,10 +34,13 @@ val libraryQuery = """
 /**
  * Query to get the recent chapters of manga from the library up to a date.
  */
-fun getRecentsQuery() = """
+fun getRecentsQuery() =
+    """
     SELECT ${Manga.TABLE}.${Manga.COL_URL} as mangaUrl, * FROM ${Manga.TABLE} JOIN ${Chapter.TABLE}
     ON ${Manga.TABLE}.${Manga.COL_ID} = ${Chapter.TABLE}.${Chapter.COL_MANGA_ID}
-    WHERE ${Manga.COL_FAVORITE} = 1 AND ${Chapter.COL_DATE_UPLOAD} > ?
+    WHERE ${Manga.COL_FAVORITE} = 1 
+    AND ${Chapter.COL_DATE_UPLOAD} > ?
+    AND ${Chapter.COL_DATE_FETCH} > ${Manga.COL_DATE_ADDED}
     ORDER BY ${Chapter.COL_DATE_UPLOAD} DESC
 """
 
@@ -47,7 +51,8 @@ fun getRecentsQuery() = """
  * and are read after the given time period
  * @return return limit is 25
  */
-fun getRecentMangasQuery() = """
+fun getRecentMangasQuery() =
+    """
     SELECT ${Manga.TABLE}.${Manga.COL_URL} as mangaUrl, ${Manga.TABLE}.*, ${Chapter.TABLE}.*, ${History.TABLE}.*
     FROM ${Manga.TABLE}
     JOIN ${Chapter.TABLE}
@@ -65,7 +70,8 @@ fun getRecentMangasQuery() = """
     LIMIT 25
 """
 
-fun getHistoryByMangaId() = """
+fun getHistoryByMangaId() =
+    """
     SELECT ${History.TABLE}.*
     FROM ${History.TABLE}
     JOIN ${Chapter.TABLE}
@@ -73,7 +79,8 @@ fun getHistoryByMangaId() = """
     WHERE ${Chapter.TABLE}.${Chapter.COL_MANGA_ID} = ? AND ${History.TABLE}.${History.COL_CHAPTER_ID} = ${Chapter.TABLE}.${Chapter.COL_ID}
 """
 
-fun getHistoryByChapterUrl() = """
+fun getHistoryByChapterUrl() =
+    """
     SELECT ${History.TABLE}.*
     FROM ${History.TABLE}
     JOIN ${Chapter.TABLE}
@@ -81,7 +88,8 @@ fun getHistoryByChapterUrl() = """
     WHERE ${Chapter.TABLE}.${Chapter.COL_URL} = ? AND ${History.TABLE}.${History.COL_CHAPTER_ID} = ${Chapter.TABLE}.${Chapter.COL_ID}
 """
 
-fun getLastReadMangaQuery() = """
+fun getLastReadMangaQuery() =
+    """
     SELECT ${Manga.TABLE}.*, MAX(${History.TABLE}.${History.COL_LAST_READ}) AS max
     FROM ${Manga.TABLE}
     JOIN ${Chapter.TABLE}
@@ -93,7 +101,8 @@ fun getLastReadMangaQuery() = """
     ORDER BY max DESC
 """
 
-fun getTotalChapterMangaQuery()= """
+fun getTotalChapterMangaQuery() =
+    """
     SELECT ${Manga.TABLE}.*
     FROM ${Manga.TABLE}
     JOIN ${Chapter.TABLE}
@@ -102,10 +111,21 @@ fun getTotalChapterMangaQuery()= """
     ORDER by COUNT(*)
 """
 
+fun getLatestChapterMangaQuery() =
+    """
+    SELECT ${Manga.TABLE}.*, MAX(${Chapter.TABLE}.${Chapter.COL_DATE_UPLOAD}) AS max
+    FROM ${Manga.TABLE}
+    JOIN ${Chapter.TABLE}
+    ON ${Manga.TABLE}.${Manga.COL_ID} = ${Chapter.TABLE}.${Chapter.COL_MANGA_ID}
+    GROUP BY ${Manga.TABLE}.${Manga.COL_ID}
+    ORDER by max DESC
+"""
+
 /**
  * Query to get the categories for a manga.
  */
-fun getCategoriesForMangaQuery() = """
+fun getCategoriesForMangaQuery() =
+    """
     SELECT ${Category.TABLE}.* FROM ${Category.TABLE}
     JOIN ${MangaCategory.TABLE} ON ${Category.TABLE}.${Category.COL_ID} =
     ${MangaCategory.TABLE}.${MangaCategory.COL_CATEGORY_ID}

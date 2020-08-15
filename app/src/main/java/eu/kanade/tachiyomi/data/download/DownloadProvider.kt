@@ -1,14 +1,19 @@
 package eu.kanade.tachiyomi.data.download
 
 import android.content.Context
-import android.net.Uri
+import androidx.core.net.toUri
 import com.hippo.unifile.UniFile
+import eu.kanade.tachiyomi.R
 import eu.kanade.tachiyomi.data.database.models.Chapter
 import eu.kanade.tachiyomi.data.database.models.Manga
 import eu.kanade.tachiyomi.data.preference.PreferencesHelper
-import eu.kanade.tachiyomi.data.preference.getOrDefault
 import eu.kanade.tachiyomi.source.Source
-import eu.kanade.tachiyomi.util.DiskUtil
+import eu.kanade.tachiyomi.util.storage.DiskUtil
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.flow.launchIn
+import kotlinx.coroutines.flow.onEach
 import uy.kohesive.injekt.injectLazy
 
 /**
@@ -19,22 +24,23 @@ import uy.kohesive.injekt.injectLazy
  */
 class DownloadProvider(private val context: Context) {
 
-    /**
-     * Preferences helper.
-     */
     private val preferences: PreferencesHelper by injectLazy()
+
+    private val scope = CoroutineScope(Job() + Dispatchers.Main)
 
     /**
      * The root directory for downloads.
      */
-    private var downloadsDir = preferences.downloadsDirectory().getOrDefault().let {
-        UniFile.fromUri(context, Uri.parse(it))
+    private var downloadsDir = preferences.downloadsDirectory().get().let {
+        val dir = UniFile.fromUri(context, it.toUri())
+        DiskUtil.createNoMediaFile(dir, context)
+        dir
     }
 
     init {
-        preferences.downloadsDirectory().asObservable()
-                .skip(1)
-                .subscribe { downloadsDir = UniFile.fromUri(context, Uri.parse(it)) }
+        preferences.downloadsDirectory().asFlow()
+            .onEach { downloadsDir = UniFile.fromUri(context, it.toUri()) }
+            .launchIn(scope)
     }
 
     /**
@@ -44,9 +50,13 @@ class DownloadProvider(private val context: Context) {
      * @param source the source of the manga.
      */
     internal fun getMangaDir(manga: Manga, source: Source): UniFile {
-        return downloadsDir
+        try {
+            return downloadsDir
                 .createDirectory(getSourceDirName(source))
                 .createDirectory(getMangaDirName(manga))
+        } catch (e: NullPointerException) {
+            throw Exception(context.getString(R.string.invalid_download_dir))
+        }
     }
 
     /**
@@ -78,7 +88,25 @@ class DownloadProvider(private val context: Context) {
      */
     fun findChapterDir(chapter: Chapter, manga: Manga, source: Source): UniFile? {
         val mangaDir = findMangaDir(manga, source)
-        return mangaDir?.findFile(getChapterDirName(chapter))
+        return getValidChapterDirNames(chapter).asSequence()
+            .mapNotNull { mangaDir?.findFile(it) }
+            .firstOrNull()
+    }
+
+    /**
+     * Returns a list of downloaded directories for the chapters that exist.
+     *
+     * @param chapters the chapters to query.
+     * @param manga the manga of the chapter.
+     * @param source the source of the chapter.
+     */
+    fun findChapterDirs(chapters: List<Chapter>, manga: Manga, source: Source): List<UniFile> {
+        val mangaDir = findMangaDir(manga, source) ?: return emptyList()
+        return chapters.mapNotNull { chapter ->
+            getValidChapterDirNames(chapter).asSequence()
+                .mapNotNull { mangaDir.findFile(it) }
+                .firstOrNull()
+        }
     }
 
     /**
@@ -105,7 +133,25 @@ class DownloadProvider(private val context: Context) {
      * @param chapter the chapter to query.
      */
     fun getChapterDirName(chapter: Chapter): String {
-        return DiskUtil.buildValidFilename(chapter.name)
+        return DiskUtil.buildValidFilename(
+            when {
+                chapter.scanlator != null -> "${chapter.scanlator}_${chapter.name}"
+                else -> chapter.name
+            }
+        )
     }
 
+    /**
+     * Returns valid downloaded chapter directory names.
+     *
+     * @param chapter the chapter to query.
+     */
+    fun getValidChapterDirNames(chapter: Chapter): List<String> {
+        return listOf(
+            getChapterDirName(chapter),
+
+            // Legacy chapter directory name used in v0.9.2 and before
+            DiskUtil.buildValidFilename(chapter.name)
+        )
+    }
 }

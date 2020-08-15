@@ -1,6 +1,7 @@
 package eu.kanade.tachiyomi.data.download
 
 import android.content.Context
+import androidx.core.content.edit
 import com.google.gson.Gson
 import eu.kanade.tachiyomi.data.database.DatabaseHelper
 import eu.kanade.tachiyomi.data.database.models.Manga
@@ -14,7 +15,10 @@ import uy.kohesive.injekt.injectLazy
  *
  * @param context the application context.
  */
-class DownloadStore(context: Context) {
+class DownloadStore(
+    context: Context,
+    private val sourceManager: SourceManager
+) {
 
     /**
      * Preference file where active downloads are stored.
@@ -26,14 +30,6 @@ class DownloadStore(context: Context) {
      */
     private val gson: Gson by injectLazy()
 
-    /**
-     * Source manager.
-     */
-    private val sourceManager: SourceManager by injectLazy()
-
-    /**
-     * Database helper.
-     */
     private val db: DatabaseHelper by injectLazy()
 
     /**
@@ -47,9 +43,9 @@ class DownloadStore(context: Context) {
      * @param downloads the list of downloads to add.
      */
     fun addAll(downloads: List<Download>) {
-        val editor = preferences.edit()
-        downloads.forEach { editor.putString(getKey(it), serialize(it)) }
-        editor.apply()
+        preferences.edit {
+            downloads.forEach { putString(getKey(it), serialize(it)) }
+        }
     }
 
     /**
@@ -58,14 +54,18 @@ class DownloadStore(context: Context) {
      * @param download the download to remove.
      */
     fun remove(download: Download) {
-        preferences.edit().remove(getKey(download)).apply()
+        preferences.edit {
+            remove(getKey(download))
+        }
     }
 
     /**
      * Removes all the downloads from the store.
      */
     fun clear() {
-        preferences.edit().clear().apply()
+        preferences.edit {
+            clear()
+        }
     }
 
     /**
@@ -82,9 +82,9 @@ class DownloadStore(context: Context) {
      */
     fun restore(): List<Download> {
         val objs = preferences.all
-                .mapNotNull { it.value as? String }
-                .map { deserialize(it) }
-                .sortedBy { it.order }
+            .mapNotNull { it.value as? String }
+            .mapNotNull { deserialize(it) }
+            .sortedBy { it.order }
 
         val downloads = mutableListOf<Download>()
         if (objs.isNotEmpty()) {
@@ -119,8 +119,12 @@ class DownloadStore(context: Context) {
      *
      * @param string the download as string.
      */
-    private fun deserialize(string: String): DownloadObject {
-        return gson.fromJson(string, DownloadObject::class.java)
+    private fun deserialize(string: String): DownloadObject? {
+        return try {
+            gson.fromJson(string, DownloadObject::class.java)
+        } catch (e: Exception) {
+            null
+        }
     }
 
     /**
@@ -131,5 +135,4 @@ class DownloadStore(context: Context) {
      * @param order the order of the download in the queue.
      */
     data class DownloadObject(val mangaId: Long, val chapterId: Long, val order: Int)
-
 }
